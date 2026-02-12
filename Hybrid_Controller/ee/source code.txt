@@ -1,0 +1,723 @@
+#include <SPI.h>
+#include <math.h>
+#include <Arduino.h>
+#include <esp_adc_cal.h>
+/*-----------------------------------------------------------*/
+
+/* Pin definition, task lag bit definition*/
+#define conFigUSE_16_BIT_TICKS 0 // Events_bits 32
+#define ADC_ATTEN ADC_ATTEN_11db // measurment up to
+#define PAI 3.141592
+#define PIN1 5  // POT chip1 CS
+#define PIN2 27 // POT chip2 CS
+#define LINE (1 << 0)
+#define INCREASE (1 << 1)
+#define DECLINE (1 << 2)
+#define SIN (1 << 3)
+#define LINE1 (1 << 4)
+#define INCREASE1 (1 << 5)
+#define DECLINE1 (1 << 6)
+#define SIN1 (1 << 7)
+#define READ (1 << 8)
+#define OPMODE (1 << 9)
+#define HALT (1 << 10)
+#define REP (1 << 11)
+#define DIR 14
+#define READX 34
+#define READY 35
+#define READU 32
+#define READZ 33
+#define OP_PIN 25
+#define IC_PIN 26
+/*-----------------------------------------------------------*/
+
+/*Task definition*/
+void TaskPrintline(void *);
+void TaskPrintline1(void *);
+void TaskPrintincrease(void *);
+void TaskPrintincrease1(void *);
+void TaskRead(void *);
+void TaskPrintdecline(void *);
+void TaskPrintdecline1(void *);
+void TaskPrintsin(void *);
+void TaskPrintsin1(void *);
+void dpWrite(int, int, int);
+void Command(void *);
+// void change1(int *read_found, float *pre, float *s2, const char *s1, String *tem3, String *tem2, bool *changed,Mes* mes);
+void IcMode(void);
+void OpMode(void);
+void Reapeat(void *);
+void Halt(void);
+
+/*-----------------------------------------------------------*/
+
+/**Digital Potentiometer (referred to as THAT) Change Parameter Structure Definition
+ * potentiomere work as coefficient potentiometer which used to change the value of coefficients. 
+ * Settings of 0-10 correspond to coefficients of 0-1 
+*/
+typedef struct
+{
+  /*Max output*/
+  int max_range = 10;  
+   /*Min output*/
+  int min_range = 0; 
+   /*Time to complete a cycle*/
+  float time = 5000; 
+   /*constant output value in constant output mode*/
+  int val_set; 
+  int read;
+} Mes;
+void change1(int *read_found, float *pre, float *s2, const char *s1, String *tem3, String *tem2, bool *changed,Mes* mes);
+/*All eight potentiometers has their own message structure*/
+Mes block;
+Mes block_sin_pot1;
+Mes block_line_pot4;
+Mes block_increase_pot3;
+Mes block_decline__pot2;
+Mes block_sin1_pot5;
+Mes block_line1_pot8;
+Mes block_increase1_pot7;
+Mes block_decline1_pot6;
+
+ /*buffer to store the readed data from THAT*/
+int DataRead[2000];
+
+/*
+  *@brief Hybrid Controller instruction definition array
+  *
+*/
+enum read
+{
+  READ1,
+  READ2,
+  READ3,
+  READ4,
+  POT1,
+  POT2,
+  POT3,
+  POT4,
+  POT5,
+  POT6,
+  POT7,
+  POT8,
+  REAP,
+  OP,
+  IC,
+  POT1_OFF,
+  POT2_OFF,
+  POT3_OFF,
+  POT4_OFF,
+  POT5_OFF,
+  POT6_OFF,
+  POT7_OFF,
+  POT8_OFF
+};
+
+/*
+ * @brief POT paramter setting
+*/
+enum vari
+{
+  TIME,
+  MAX,
+  MIN,
+  SET,
+  BREAK
+};
+const char *pVari[] = {"TIME", "MAX", "MIN", "SET", "BREAK"};
+const char *pCommand[] = {"read1", "read2", "read3", "read4", "pot1", "pot2", "pot3", "pot4", "pot5", "pot6",
+                          "pot7", "pot8", "REAP", "OP", "IC", "pot1_off", "pot2_off", "pot3_off", "pot4_off", "pot5_off", "pot6_off", "pot7_off", "pot8_off"};
+
+/*Creating evetn group handles. xeventgroup will point to a task event group. This task event group will indicate whether the task is running or not.*/
+EventGroupHandle_t xEventGroup;
+#define CONFIG_IDF_TARGET_ESP32S3
+void setup()
+{
+
+  // PinMode(33,INPUT);
+  // analogSetPinAttenuation(32, ADC_2_5db);
+  xEventGroup = xEventGroupCreate();
+
+  disableCore0WDT();
+  pinMode(DIR, OUTPUT);
+  pinMode(READX, INPUT);
+  pinMode(OP_PIN, OUTPUT);
+  pinMode(IC_PIN, OUTPUT);
+  pinMode(READY, INPUT);
+  pinMode(READU, INPUT);
+  pinMode(READZ, INPUT);
+  pinMode(27, OUTPUT);
+  pinMode(5, OUTPUT);
+  digitalWrite(DIR, LOW);
+  Serial.begin(250000);
+  SPI.begin();
+  SPI.beginTransaction(SPISettings(20000000, MSBFIRST, SPI_MODE0));
+
+  /*RTOS systm task create */
+  xTaskCreatePinnedToCore(Command, "Command", 4096, &block, 1, NULL, 1);
+  xTaskCreatePinnedToCore(TaskRead, "TaskRead", 9000, &block, 1, NULL, 0);
+
+  xTaskCreatePinnedToCore(TaskPrintsin, "Print0", 4096, &block_sin_pot1, 1, NULL, 0);
+  xTaskCreatePinnedToCore(Reapeat, "Reapeat", 1000, &block, 1, NULL, 0);
+  xTaskCreatePinnedToCore(TaskPrintline, "print1", 4096, &block_line_pot4, 1, NULL, 0);
+  xTaskCreatePinnedToCore(TaskPrintincrease, "Print2", 4096, &block_increase_pot3, 1, NULL, 0);
+  xTaskCreatePinnedToCore(TaskPrintdecline, "Printdecline", 4096, &block_decline__pot2, 1, NULL, 0);
+
+  xTaskCreatePinnedToCore(TaskPrintsin1, "Print01", 4096, &block_sin1_pot5, 1, NULL, 0);
+  xTaskCreatePinnedToCore(TaskPrintline1, "print11", 4096, &block_line1_pot8, 1, NULL, 0);
+  xTaskCreatePinnedToCore(TaskPrintincrease1, "Print21", 4096, &block_increase1_pot7, 1, NULL, 0);
+  xTaskCreatePinnedToCore(TaskPrintdecline1, "Printdecline1", 4096, &block_decline1_pot6, 1, NULL, 0);
+}
+
+/**
+  * @brief OP mode setting PIN
+  * @retval None
+  */
+void OpMode(void)
+{
+  digitalWrite(IC_PIN, HIGH);
+  digitalWrite(OP_PIN, LOW);
+}
+
+/**
+  * @brief HALT mode setting PIN
+  * @retval None
+  */
+void Halt(void)
+{
+  digitalWrite(OP_PIN, HIGH);
+  digitalWrite(IC_PIN, HIGH);
+}
+
+/**
+  * @brief IC mode setting PIN
+  * @retval None
+  */
+
+void IcMode(void)
+{
+  digitalWrite(OP_PIN, HIGH);
+  digitalWrite(IC_PIN, LOW);
+}
+
+/**
+  * @brief Reapeat mode setting PIN
+  * @param param: not used yet. can be used as data interface to set the reprtition fequency. 
+  * @retval None
+  */
+void Reapeat(void *param)
+{
+  Mes *ptr = (Mes *)param;
+  while (1)
+  {
+    /*Task Reapeat will be obstacle untill the REP been setted to 1 */
+    xEventGroupWaitBits(xEventGroup, REP, pdFALSE, pdFALSE, portMAX_DELAY);
+    OpMode();
+    vTaskDelay(100);
+    IcMode();
+    vTaskDelay(100);
+  }
+}
+
+/**
+  * @brief Read data from THAT and send the data to computer
+  * @param param:pointer to a Mes structure that contains the configuration information for the task.  
+  * @retval None
+  */
+void TaskRead(void *param)
+{
+  Mes *ptr = (Mes *)param;
+  while (1)
+  {
+    xEventGroupWaitBits(xEventGroup, READ, pdFALSE, pdFALSE, portMAX_DELAY);
+    for (int i = 0; i < 2000; i++)
+    {
+      DataRead[i] = analogRead(ptr->read);
+      vTaskDelay(0.05);
+    }
+    for (int i = 0; i < 2000; i++)
+    {
+      Serial.println(DataRead[i]);
+    }
+    xEventGroupClearBits(xEventGroup, READ);
+  }
+}
+
+/**
+  * @brief The value of Pot 3 on Chip 1 does not change unless the set value change.
+  * @param param:pointer to a Mes structure that contains the configuration information for the task.  
+  * @retval None
+  */
+void TaskPrintline(void *param)
+{
+  Mes *ptr = (Mes *)param;
+  while (1)
+  {
+    xEventGroupWaitBits(xEventGroup, LINE, pdFALSE, pdFALSE, portMAX_DELAY);
+    dpWrite(3, (ptr->val_set * 255) / 10, PIN1);
+    Serial.println("line");
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+  }
+}
+
+/**
+  * @brief The value of Pot 3 on Chip 2 does not change unless the set value change.
+  * @param param:pointer to a Mes structure that contains the configuration information for the task.  
+  * @retval None
+  */
+void TaskPrintline1(void *param)
+{
+  Mes *ptr = (Mes *)param;
+  while (1)
+  {
+    xEventGroupWaitBits(xEventGroup, LINE, pdFALSE, pdFALSE, portMAX_DELAY);
+    dpWrite(3, (ptr->val_set * 255) / 10, PIN2);
+    Serial.println("line1");
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+  }
+}
+
+/**
+  * @brief The value of Pot 2 on Chip 1 increase linearly
+  * @param param:pointer to a Mes structure that contains the configuration information for the task.   
+  * @retval None
+  */
+void TaskPrintincrease(void *param)
+{
+  Mes *ptr = (Mes *)param;
+  while (1)
+  {
+    float max = ptr->max_range * 255 / 10;
+    float min = ptr->min_range * 255 / 10;
+    for (int x = (int)min; x < max; x++)
+    {
+      xEventGroupWaitBits(xEventGroup, INCREASE, pdFALSE, pdFALSE, portMAX_DELAY);
+      dpWrite(2, x, PIN1);
+      vTaskDelay(ptr->time / (max - min));
+    }
+  }
+}
+
+/**
+  * @brief The value of Pot 2 on Chip 2 increase linearly
+  * @param param:pointer to a Mes structure that contains the configuration information for the task.   
+  * @retval None
+  */
+void TaskPrintincrease1(void *param)
+{
+  Mes *ptr = (Mes *)param;
+  while (1)
+  {
+    float max = ptr->max_range * 255 / 10;
+    float min = ptr->min_range * 255 / 10;
+    for (int x = (int)min; x < max; x++)
+    {
+      xEventGroupWaitBits(xEventGroup, INCREASE, pdFALSE, pdFALSE, portMAX_DELAY);
+      dpWrite(2, x, PIN2);
+      vTaskDelay(ptr->time / (max - min));
+    }
+  }
+}
+
+/**
+  * @brief The value of Pot 1 on Chip 1 decrease linearly
+  * @param param:pointer to a Mes structure that contains the configuration information for the task.   
+  * @retval None
+  */
+void TaskPrintdecline(void *param)
+{
+  Mes *ptr = (Mes *)param;
+
+  while (1)
+  {
+    float max = ptr->max_range * 255 / 10;
+    float min = ptr->min_range * 255 / 10;
+    for (int x = max; x > min; x--)
+    {
+      xEventGroupWaitBits(xEventGroup, DECLINE, pdFALSE, pdFALSE, portMAX_DELAY);
+      dpWrite(1, x, PIN1);
+      vTaskDelay(ptr->time / (max - min)); // ptr->time/(max-min)
+    }
+  }
+}
+
+/**
+  * @brief The value of Pot 1 on Chip 2 decrease linearly
+  * @param param:pointer to a Mes structure that contains the configuration information for the task.  
+  * @retval None
+  */
+void TaskPrintdecline1(void *param)
+{
+  Mes *ptr = (Mes *)param;
+
+  while (1)
+  {
+    float max = ptr->max_range * 255 / 10;
+    float min = ptr->min_range * 255 / 10;
+    for (int x = max; x > min; x--)
+    {
+      xEventGroupWaitBits(xEventGroup, DECLINE, pdFALSE, pdFALSE, portMAX_DELAY);
+      dpWrite(1, x, PIN2);
+      vTaskDelay(ptr->time / (max - min)); // ptr->time/(max-min)
+    }
+  }
+}
+
+/**
+  * @brief The value of Pot 1 on Chip 1 change as a sin function
+  * @param param:pointer to a Mes structure that contains the configuration information for the task.   
+  * @retval None
+  */
+void TaskPrintsin(void *param)
+{
+  Mes *ptr = (Mes *)param;
+  double y;
+  int x;
+  while (1)
+  {
+    for (y = 0; y < 2 * PAI; y += 2 * PAI / 300)
+    {
+      xEventGroupWaitBits(xEventGroup, SIN, pdFALSE, pdFALSE, portMAX_DELAY);
+      x = ptr->max_range * (sin(y) + 1) * 256 / 20;
+      dpWrite(0, x, PIN1);
+      vTaskDelay(1 / (300));
+    }
+  }
+}
+
+/**
+  * @brief The value of Pot 1 on Chip 2 change as a sin function
+  * @param param:pointer to a Mes structure that contains the configuration information for the task. 
+  * @retval None
+  */
+void TaskPrintsin1(void *param)
+{
+  Mes *ptr = (Mes *)param;
+  double y;
+  int x;
+  while (1)
+  {
+    for (y = 0; y < 2 * PAI; y += 2 * PAI / 300)
+    {
+      xEventGroupWaitBits(xEventGroup, SIN, pdFALSE, pdFALSE, portMAX_DELAY);
+      x = ptr->max_range * (sin(y) + 1) * 256 / 20;
+      dpWrite(0, x, PIN2);
+      vTaskDelay(1 / (300));
+    }
+  }
+}
+
+/**
+  * @brief Received the commands from computer,accroding the commands to update the status and
+  *        parameters of the task. 
+  * @param param: pointer to a Mes structure that contains the configuration information for the READ funtion. 
+  * @retval None
+  */
+void Command(void *param)
+{
+  Mes *ptr = (Mes *)param;
+  /* Three branches are set up in the command task to ensure that 
+   * the string data read is translated into the correct command.
+  */
+  int read_found = 0;
+  const char *s;
+  const char *s1;
+  float s2;
+  String tem = "";
+  String tem1 = "";
+  String tem2 = "";
+  bool changed = false;
+  float pre;
+  while (1)
+  {
+    vTaskDelay(2000 / portTICK_RATE_MS);
+    if (read_found == 0)
+    {
+      tem = "";
+    }
+    else if (read_found == 1)
+    {
+      tem1 = "";
+    }
+    else
+    {
+      tem2 = "";
+    }
+    char c;
+    /*Receiveing data from the serial port*/
+    while (Serial.available() > 0)
+    {
+      if ((c = Serial.read()) != '\n')
+        if (read_found == 0)
+        {
+          tem += c;
+        }
+        else if (read_found == 1)
+        {
+          tem1 += c;
+        }
+        else
+        {
+          tem2 += c;
+        }
+    }
+    s = tem.c_str();
+    s1 = tem1.c_str();
+    s2 = atof(tem2.c_str());
+    int state;
+    /*debugging text use*/
+    Serial.println(".....");
+    Serial.println(read_found);
+    Serial.println(s);
+    Serial.println(s1);
+    Serial.println(s2);
+    Serial.println("---");
+    for (state = READ1; state <= POT8_OFF; state++)
+    {
+      /*First determine if it is a branch one instruction*/
+      if (strcmp(s, pCommand[state]) == 0)
+      {
+        switch (state)
+        {
+        case OP:
+          xEventGroupSetBits(xEventGroup, REP);
+          OpMode();
+          break;
+        case HALT:
+          xEventGroupSetBits(xEventGroup, REP);
+          Halt();
+          break;
+        case IC:
+          xEventGroupClearBits(xEventGroup, REP);
+          IcMode();
+          break;
+        case REAP:
+          Serial.println("REP123");
+          xEventGroupSetBits(xEventGroup, REP);
+          break;
+        case READ1:
+          Serial.println("READ1");
+          ptr->read = READX;
+          xEventGroupSetBits(xEventGroup, READ);
+          break;
+        case READ2:
+          ptr->read = READY;
+          xEventGroupSetBits(xEventGroup, READ);
+          Serial.println("READ2");
+          break;
+        case READ3:
+          ptr->read = READU;
+          xEventGroupSetBits(xEventGroup, READ);
+          Serial.println("READ3");
+          break;
+        case READ4:
+          ptr->read = READZ;
+          xEventGroupSetBits(xEventGroup, READ);
+          Serial.println("READ4");
+          break;
+        /* If the instruction is POT setting instruction,go into branch two and need to receive the EXIT command to exit branch two*/
+        case POT1:
+          if (read_found == 0)
+          {
+            read_found = 1;
+            break;
+          }
+          /*change1 fucntion is a function */
+          change1(&read_found, &pre, &s2, s1, &tem2, &tem1, &changed,&block_sin_pot1);
+          xEventGroupSetBits(xEventGroup, SIN);
+          break;
+        case POT1_OFF:
+          xEventGroupClearBits(xEventGroup, SIN);
+          Serial.println("POT1_OFF");
+          break;
+        case POT2:
+          if (read_found == 0)
+          {
+            read_found = 1;
+            break;
+          }
+          change1(&read_found, &pre, &s2, s1, &tem2, &tem1, &changed,&block_decline__pot2);
+          xEventGroupSetBits(xEventGroup, DECLINE);
+          break;
+        case POT2_OFF:
+          Serial.println("POT2_OFF");
+          xEventGroupClearBits(xEventGroup, DECLINE);
+          break;
+        case POT3:
+          if (read_found == 0)
+          {
+            read_found = 1;
+            break;
+          }
+          change1(&read_found, &pre, &s2, s1, &tem2, &tem1, &changed,&block_increase_pot3);
+          Serial.println("POT3");
+          xEventGroupSetBits(xEventGroup, INCREASE);
+          break;
+        case POT3_OFF:
+          Serial.println("POT3_OFF");
+          xEventGroupClearBits(xEventGroup, INCREASE);
+          break;
+        case POT4:
+          if (read_found == 0)
+          {
+            read_found = 1;
+            break;
+          }
+          change1(&read_found, &pre, &s2, s1, &tem2, &tem1, &changed,&block_line_pot4);
+          Serial.println("POT4");
+          xEventGroupSetBits(xEventGroup, LINE);
+          break;
+        case POT4_OFF:
+          Serial.println("POT4_OFF");
+          xEventGroupClearBits(xEventGroup, LINE);
+          break;
+        case POT5:
+          if (read_found == 0)
+          {
+            read_found = 1;
+            break;
+          }
+          change1(&read_found, &pre, &s2, s1, &tem2, &tem1, &changed,&block_sin1_pot5);
+          Serial.println("POT5");
+          xEventGroupSetBits(xEventGroup, SIN1);
+          break;
+        case POT5_OFF:
+          Serial.println("POT5_OFF");
+          xEventGroupClearBits(xEventGroup, SIN1);
+          break;
+        case POT6:
+          if (read_found == 0)
+          {
+            read_found = 1;
+            break;
+          }
+          change1(&read_found, &pre, &s2, s1, &tem2, &tem1, &changed,&block_decline1_pot6);
+          Serial.println("POT6");
+          xEventGroupSetBits(xEventGroup, DECLINE1);
+          break;
+        case POT6_OFF:
+          Serial.println("POT6_OFF");
+          xEventGroupClearBits(xEventGroup, DECLINE1);
+          break;
+        case POT7:
+          if (read_found == 0)
+          {
+            read_found = 1;
+            break;
+          }
+          change1(&read_found, &pre, &s2, s1, &tem2, &tem1, &changed, &block_increase1_pot7);
+          Serial.println("POT7");
+          xEventGroupSetBits(xEventGroup, INCREASE1);
+          break;
+        case POT7_OFF:
+          Serial.println("POT7_OFF");
+          xEventGroupClearBits(xEventGroup, INCREASE1);
+          break;
+
+        case POT8:
+          change1(&read_found, &pre, &s2, s1, &tem2, &tem1, &changed,&block_line1_pot8);
+          Serial.println("POT8");
+          xEventGroupSetBits(xEventGroup, LINE1);
+          break;
+
+        case POT8_OFF:
+          Serial.println("POT8_OFF");
+          xEventGroupClearBits(xEventGroup, LINE1);
+          break;
+        default:
+          Serial.println("default");
+          break;
+        }
+      }
+    }
+  }
+}
+
+void loop()
+{
+}
+/** 
+ *@brief The change1 function will determine which values should be changed and store these values in the accordingly Mes sturcture, 
+         and it change some variant to ensure that the program doesn't go into other branches.
+ @param read_found branch informtion.
+ @param pre: a pointer to last moment value of s2.
+ @param s2: a pointer to current moment value of s2.
+ @param s1: a pointer to current moment of s1, the string to be validated as a command.
+ @param tem2:  a pointer to tem1,rewrite it with blank string to forbid program enter other branchs.
+ @param tem1: a pointer to tem1,rewrite it with blank string to forbid program enter other branchs.
+ @param change: a pointer to bool, The sign of whether the value of s2 changes.
+ @param mes: a pointer to a Mes structure,which will offer the specific value for other task.
+*/
+void change1(int *read_found, float *pre, float *s2, const char *s1, String *tem2, String *tem1, bool *changed,Mes* mes)
+{
+  int vari1;
+
+  for (vari1 = TIME; vari1 <= BREAK; vari1++)
+  {
+    if (strcmp(s1, pVari[vari1]) == 0)
+    {
+      *read_found = 2;
+      if (*changed == false)
+      {
+        *pre = *s2;
+        *changed = true;
+      }
+      switch (vari1)
+      {
+      case TIME:
+        if (*pre != *s2)
+        {
+          *changed = false;
+          mes->time = *s2;
+          *tem2 = "";
+          *s2 = 0;
+          *read_found = 1;
+        }
+        break;
+      case MAX:
+        if (*pre != *s2)
+        {
+          *changed = false;
+           mes->max_range = *s2;
+          *s2 = 0;
+          *tem2 = "";
+          *read_found = 1;
+        }
+        break;
+      case MIN:
+        if (*pre != *s2)
+        {
+          *changed = false;
+          mes->min_range = *s2;
+          *s2 = 0;
+          *tem2 = "";
+          *read_found = 1;
+        }
+        break;
+      case BREAK:
+        *tem1 = "";
+        *read_found = 0;
+        break;
+      default:
+
+        break;
+      }
+    }
+    else
+      ;
+  }
+}
+
+/**
+ * @brief SPI write function
+ * @param N_D: first eight bits of address
+ * @param V_D: eight data bits
+ * @param S: CS
+ */
+void dpWrite(int N_D, int V_D, int s)
+{
+  digitalWrite(s, LOW);
+  SPI.transfer(N_D);
+  SPI.transfer(V_D);
+  digitalWrite(s, HIGH);
+}

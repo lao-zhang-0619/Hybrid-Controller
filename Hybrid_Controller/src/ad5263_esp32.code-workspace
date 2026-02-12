@@ -1,0 +1,30 @@
+{
+	"folders": [
+		{
+			"name": "ad5263_esp32",
+			"path": "../../../../../Desktop/esp32/ad5263_esp32"
+		},
+		{
+			"name": "system",
+			"path": "../../system"
+		},
+		{
+			"name": "ee",
+			"path": ".."
+		},
+		{
+			"name": "all",
+			"path": "../../all"
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"*.tcc": "cpp",
+			"fstream": "cpp",
+			"istream": "cpp",
+			"limits": "cpp",
+			"sstream": "cpp",
+			"streambuf": "cpp"
+		}
+	}
+}
