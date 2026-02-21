@@ -12,7 +12,6 @@ def plot_dynamic(*data_lists, block=True):
 
     n = len(data_lists)
     if n == 0:
-        print("警告：没有传入任何数据列表！")
         return
     
     cols = 2  
@@ -56,63 +55,52 @@ def plot_dynamic(*data_lists, block=True):
 
 
 def get_available_serial_ports():
-    """
-    枚举系统中所有可用的串口，返回串口信息列表
-    返回格式：[(端口名称, 设备描述, 硬件ID), ...]
-    """
+
     available_ports = []
-    # 枚举所有可用串口
     ports = list_ports.comports()
     for port in ports:
-        # port.device：串口名称（如COM3、/dev/ttyUSB0）
-        # port.description：设备描述（如USB-SERIAL CH340 (COM3)）
-        # port.hwid：硬件ID（包含设备VID/PID，用于精准匹配）
         available_ports.append((port.device, port.description, port.hwid))
     return available_ports
 
 def select_serial_port_by_user_input():
-    """
-    枚举可用串口，接收用户输入，匹配目标串口
-    """
-    # 1. 获取所有可用串口
+
+ 
     available_ports = get_available_serial_ports()
     
     if not available_ports:
-        print("未检测到任何可用串口，请检查设备连接！")
+        print("Does't have any available serial ports!")
         return None
     
-    # 2. 打印可用串口列表（供用户参考选择）
     print("=" * 50)
-    print("检测到以下可用串口：")
+    print("Available Serial Ports:")
     for index, (device, desc, hwid) in enumerate(available_ports, start=1):
-        print(f"{index}. 串口名称：{device}")
-        print(f"   设备描述：{desc}")
-        print(f"   硬件ID：{hwid}\n")
+        print(f"{index}. serial name:{device}")
+        print(f"   descript:{desc}")
+        print(f"   ID:{hwid}\n")
     print("=" * 50)
     
-    # 3. 接收用户输入（支持两种输入方式：编号 / 串口关键字）
-    user_input = input("请输入串口编号（如1）或串口关键字（如COM、USB、ttyUSB）：").strip()
+    user_input = input("Please select a serial port (by number or name):").strip()
     
-    # 4. 匹配目标串口
+ 
     target_port = None
-    # 方式1：匹配输入的编号
+   
     if user_input.isdigit():
         input_index = int(user_input)
         if 1 <= input_index <= len(available_ports):
-            target_port = available_ports[input_index - 1][0]  # 提取串口名称
-    # 方式2：匹配关键字（模糊查询，匹配串口名称/设备描述）
+            target_port = available_ports[input_index - 1][0]  
+   
     else:
         for device, desc, hwid in available_ports:
             if user_input.lower() in device.lower() or user_input.lower() in desc.lower():
                 target_port = device
                 break
     
-    # 5. 验证匹配结果
+
     if target_port:
         print(f"foud serial ports:{target_port}")
         return target_port
     else:
-        print("输入无效，未匹配到对应的串口！")
+        print("invalid input, no matching serial port found.")
         return None
     
 def get_list(serial_str):
@@ -128,9 +116,7 @@ def get_list(serial_str):
         return
     
     int_data_list=[]
-    with open('record.txt', 'w',encoding='utf-8')as f:
-        for item in valid_hex_list:
-            f.write(f"{item}\n")
+
     for hex_item in valid_hex_list:
         try:
             int_value = int(hex_item,10)
@@ -139,26 +125,24 @@ def get_list(serial_str):
             print(f"invalid hex data: {hex_item}")
             continue
         
-    # filted_data= combined_filter(int_data_list)
-    # return remove_spike_noise(filted_data, 4, 2)
+
     return int_data_list
 def plot_single(data_list):
     plt.figure(figsize=(12, 6))
     
-    # 绘制折线图（适合展示数据变化趋势）
     plt.plot(data_list, color='darkblue', linewidth=1.5, marker='.', markersize=4, label='Hex to Dec Data')
     
-    # 绘制柱状图（可选，适合对比单个数据大小，注释掉折线图即可启用）
+
     # plt.bar(range(len(int_data_list)), int_data_list, color='lightblue', alpha=0.7, label='Hex to Dec Data')
     
-    # 添加图表标注，提升可读性
+
     plt.title('Data from Hex String (0xXX\\r\\n0xXX...)', fontsize=14)
     plt.xlabel('Data Index', fontsize=12)
     plt.ylabel('Decimal Value', fontsize=12)
     plt.grid(True, alpha=0.3, linestyle='--')
     plt.legend(loc='best')
      
-    # 显示图表
+
     plt.show()
 def hex_str_to_plot(serial_str):
     data_list = []
@@ -167,43 +151,42 @@ def hex_str_to_plot(serial_str):
     return 
 def plot_3d_from_dec_lists(all_dec_lists):
 
-    # 1. 严格校验输入参数有效性
     if not isinstance(all_dec_lists, list) or len(all_dec_lists) == 0:
-        raise ValueError("all_dec_lists 必须是非空的二维列表！")
+        raise ValueError("all_dec_lists error")
     for sub_list in all_dec_lists:
         if not isinstance(sub_list, list):
-            raise ValueError("all_dec_lists 的每个元素必须是列表！")
+            raise ValueError("all_dec_lists should be a list of lists")
 
-    # 2. 固定初始化所有配置（函数内部固定）
-    title = '多个列表的3D折线图可视化'
-    x_label = 'X (列表内元素索引)'
-    y_label = 'Y (列表编号)'
-    z_label = 'Z (数值)'
+
+    title = '3D Line Chart Visualization for Multiple Lists'
+    x_label = 'X (Index of elements in the list)'
+    y_label = 'Y (List Number)'
+    z_label = 'Z (numerical value)'
     figsize = (10, 7)
 
-    # 3. 创建3D画布
+
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(111, projection='3d')
 
-    # 4. 绘制3D折线图（每个列表对应一条3D折线）
-    for y_idx, dec_list in enumerate(all_dec_lists):
-        # 构造当前列表的X、Y、Z坐标
-        x_coords = np.arange(len(dec_list))  # X轴：元素索引
-        y_coords = np.full_like(x_coords, y_idx)  # Y轴：固定为当前列表编号
-        z_coords = np.array(dec_list)  # Z轴：列表的十进制数值
 
-        # 为每条线分配不同颜色，添加标记点增强可读性
+    for y_idx, dec_list in enumerate(all_dec_lists):
+  
+        x_coords = np.arange(len(dec_list))  
+        y_coords = np.full_like(x_coords, y_idx)  
+        z_coords = np.array(dec_list) 
+
+
         color = "blue"
         ax.plot(x_coords, y_coords, z_coords,
                 color=color, linewidth=2, marker='o', markersize=4,
-                label=f'列表{y_idx+1}')
+                label=f'list{y_idx+1}')
 
-    # 5. 固定设置图像样式
+
     ax.set_title(title, fontsize=12)
     ax.set_xlabel(x_label, fontsize=10)
     ax.set_ylabel(y_label, fontsize=10)
     ax.set_zlabel(z_label, fontsize=10)
-    ax.legend(loc='best')  # 显示每条线的图例
+    ax.legend(loc='best')  
 
     plt.tight_layout()
     plt.show()
@@ -259,7 +242,7 @@ def serial_communication_demo(target_port):
                 data_lists_y=[]
                 data_lists_z=[]
                 data_lists_u=[]
-                send_data = input("command to send.：") + "\n"
+                send_data = input("command to send:") + "\n"
                 if "SCAN" in send_data:
                     channel = input("Which port do you want to read??")
                     POT = input("Which POT needs to be operated??") 
@@ -312,8 +295,8 @@ def serial_communication_demo(target_port):
 
 
 if __name__ == "__main__":
-    # 步骤1：根据用户输入选择串口
+   
     target_serial_port = select_serial_port_by_user_input()
     
-    # 步骤2：使用匹配到的串口进行通信
+
     serial_communication_demo(target_serial_port)
